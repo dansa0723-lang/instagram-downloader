@@ -10,13 +10,36 @@ CORS(app)
 RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', 'ceb1656f4fmshaa112c5aba1f668p1037cdjsn2604f8be52c9')
 RAPIDAPI_HOST = 'instagram-post-reels-stories-downloader-api.p.rapidapi.com'
 
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://www.instagram.com/',
+}
+
 @app.route('/')
 def index():
     return send_file('index.html')
 
+@app.route('/api/proxy')
+def proxy():
+    """Proxy para cargar imágenes/videos de Instagram sin CORS"""
+    url = request.args.get('url', '')
+    if not url or 'instagram' not in url and 'cdninstagram' not in url and 'fbcdn' not in url:
+        return 'URL inválida', 400
+    try:
+        r = requests.get(url, headers=HEADERS, stream=True, timeout=20)
+        content_type = r.headers.get('content-type', 'image/jpeg')
+        def generate():
+            for chunk in r.iter_content(chunk_size=8192):
+                yield chunk
+        return Response(generate(), headers={
+            'Content-Type': content_type,
+            'Cache-Control': 'public, max-age=3600',
+        })
+    except Exception as e:
+        return str(e), 500
+
 @app.route('/api/info', methods=['POST'])
 def get_info():
-    """Obtiene info y preview sin descargar"""
     data = request.get_json()
     url = data.get('url', '').strip()
     if not url or 'instagram.com' not in url:
@@ -33,29 +56,28 @@ def get_info():
         for i, item in enumerate(items if isinstance(items, list) else [items]):
             if not isinstance(item, dict): continue
             media_url = item.get('url', '')
-            thumb = item.get('thumb', item.get('thumbnail', media_url if 'image' in item.get('type','') else ''))
+            thumb = item.get('thumb', item.get('thumbnail', ''))
+            if not thumb:
+                thumb = media_url if 'image' in item.get('type','') else ''
             mtype = item.get('type', 'image/jpeg')
             size = int(item.get('size', 0))
             size_mb = f"{size/1024/1024:.1f} MB" if size > 0 else ''
             medias.append({'index': i, 'url': media_url, 'thumb': thumb, 'type': mtype, 'size': size_mb})
         if not medias:
-            return jsonify({'error': 'No se encontró contenido', 'raw': str(result)[:300]}), 404
+            return jsonify({'error': 'No se encontró contenido'}), 404
         return jsonify({'medias': medias, 'count': len(medias)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Descarga un archivo específico por URL"""
     data = request.get_json()
     media_url = data.get('media_url', '').strip()
     filename = data.get('filename', 'instagram_media')
     if not media_url:
-        return jsonify({'error': 'URL de media requerida'}), 400
+        return jsonify({'error': 'URL requerida'}), 400
     try:
-        r = requests.get(media_url, stream=True, timeout=60, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        r = requests.get(media_url, stream=True, timeout=60, headers=HEADERS)
         content_type = r.headers.get('content-type', 'video/mp4')
         ext = 'mp4' if 'video' in content_type else 'jpg'
         safe_name = re.sub(r'[^\w\-_]', '_', filename)[:50]
