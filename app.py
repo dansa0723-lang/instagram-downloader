@@ -1,10 +1,6 @@
 import os
 import re
-import time
 import requests
-import tempfile
-import threading
-from pathlib import Path
 from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 
@@ -18,91 +14,59 @@ RAPIDAPI_HOST = 'instagram-post-reels-stories-downloader-api.p.rapidapi.com'
 def index():
     return send_file('index.html')
 
-@app.route('/api/download', methods=['POST'])
-def download():
+@app.route('/api/info', methods=['POST'])
+def get_info():
+    """Obtiene info y preview sin descargar"""
     data = request.get_json()
     url = data.get('url', '').strip()
-
     if not url or 'instagram.com' not in url:
-        return jsonify({'error': 'URL de Instagram inválida'}), 400
-
+        return jsonify({'error': 'URL inválida'}), 400
     try:
-        # Llamar a la API de RapidAPI
-        response = requests.get(
-            'https://instagram-post-reels-stories-downloader-api.p.rapidapi.com/instagram/',
-            headers={
-                'Content-Type': 'application/json',
-                'x-rapidapi-host': RAPIDAPI_HOST,
-                'x-rapidapi-key': RAPIDAPI_KEY,
-            },
-            params={'url': url},
-            timeout=30
+        r = requests.get(
+            f'https://{RAPIDAPI_HOST}/instagram/',
+            headers={'x-rapidapi-host': RAPIDAPI_HOST, 'x-rapidapi-key': RAPIDAPI_KEY},
+            params={'url': url}, timeout=30
         )
+        result = r.json()
+        items = result if isinstance(result, list) else result.get('result', result.get('data', []))
+        medias = []
+        for i, item in enumerate(items if isinstance(items, list) else [items]):
+            if not isinstance(item, dict): continue
+            media_url = item.get('url', '')
+            thumb = item.get('thumb', item.get('thumbnail', media_url if 'image' in item.get('type','') else ''))
+            mtype = item.get('type', 'image/jpeg')
+            size = int(item.get('size', 0))
+            size_mb = f"{size/1024/1024:.1f} MB" if size > 0 else ''
+            medias.append({'index': i, 'url': media_url, 'thumb': thumb, 'type': mtype, 'size': size_mb})
+        if not medias:
+            return jsonify({'error': 'No se encontró contenido', 'raw': str(result)[:300]}), 404
+        return jsonify({'medias': medias, 'count': len(medias)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-        if response.status_code != 200:
-            return jsonify({'error': f'Error de API: {response.status_code}'}), 500
-
-        result = response.json()
-
-        # Extraer URLs de descarga del resultado
-        download_urls = []
-
-        # La API puede devolver diferentes estructuras
-        if isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict):
-                    for key in ['url', 'download_url', 'video_url', 'image_url', 'src']:
-                        if key in item and item[key]:
-                            download_urls.append({'url': item[key], 'type': item.get('type', 'video')})
-                            break
-        elif isinstance(result, dict):
-            # Buscar URLs en diferentes campos
-            for key in ['url', 'download_url', 'video_url', 'media_url']:
-                if key in result and result[key]:
-                    download_urls.append({'url': result[key], 'type': 'video'})
-            # Buscar en arrays dentro del resultado
-            for key in ['data', 'medias', 'items', 'result']:
-                if key in result and isinstance(result[key], list):
-                    for item in result[key]:
-                        if isinstance(item, dict):
-                            for ukey in ['url', 'download_url', 'video_url', 'src']:
-                                if ukey in item and item[ukey]:
-                                    download_urls.append({'url': item[ukey], 'type': item.get('type', 'video')})
-                                    break
-
-        if not download_urls:
-            # Devolver el resultado raw para debug
-            return jsonify({'error': 'No se encontraron URLs de descarga', 'raw': result}), 500
-
-        if len(download_urls) == 1:
-            # Descargar y servir el archivo directamente
-            media_url = download_urls[0]['url']
-            media_response = requests.get(media_url, stream=True, timeout=60)
-            content_type = media_response.headers.get('content-type', 'video/mp4')
-            
-            # Determinar nombre del archivo
-            ext = 'mp4' if 'video' in content_type else 'jpg'
-            filename = f'instagram_media.{ext}'
-
-            def generate():
-                for chunk in media_response.iter_content(chunk_size=8192):
-                    yield chunk
-
-            return Response(
-                generate(),
-                headers={
-                    'Content-Type': content_type,
-                    'Content-Disposition': f'attachment; filename="{filename}"'
-                }
-            )
-
-        # Múltiples archivos — devolver lista de URLs
-        return jsonify({
-            'multiple': True,
-            'count': len(download_urls),
-            'urls': download_urls
+@app.route('/api/download', methods=['POST'])
+def download():
+    """Descarga un archivo específico por URL"""
+    data = request.get_json()
+    media_url = data.get('media_url', '').strip()
+    filename = data.get('filename', 'instagram_media')
+    if not media_url:
+        return jsonify({'error': 'URL de media requerida'}), 400
+    try:
+        r = requests.get(media_url, stream=True, timeout=60, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-
+        content_type = r.headers.get('content-type', 'video/mp4')
+        ext = 'mp4' if 'video' in content_type else 'jpg'
+        safe_name = re.sub(r'[^\w\-_]', '_', filename)[:50]
+        fname = f"{safe_name}.{ext}"
+        def generate():
+            for chunk in r.iter_content(chunk_size=8192):
+                yield chunk
+        return Response(generate(), headers={
+            'Content-Type': content_type,
+            'Content-Disposition': f'attachment; filename="{fname}"'
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
