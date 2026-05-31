@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import tempfile
 import threading
@@ -12,6 +13,36 @@ CORS(app)
 
 DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "instadown"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
+
+def get_loader():
+    import instaloader
+    L = instaloader.Instaloader(
+        download_videos=True,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        download_comments=False,
+        save_metadata=False,
+        post_metadata_txt_pattern="",
+    )
+    # Cargar cookies desde variable de entorno
+    cookies_json = os.environ.get('INSTAGRAM_COOKIES')
+    if cookies_json:
+        try:
+            import browser_cookie3
+            cookies = json.loads(cookies_json)
+            import requests
+            session = requests.Session()
+            for cookie in cookies:
+                session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain', '.instagram.com'))
+            # Inyectar sesión en instaloader
+            L.context._session = session
+            L.context._session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'x-ig-app-id': '936619743392459',
+            })
+        except Exception as e:
+            print(f"Error cargando cookies: {e}")
+    return L
 
 def parse_shortcode(url):
     url = url.strip().rstrip('/')
@@ -52,16 +83,9 @@ def download():
 
     try:
         import instaloader
-        L = instaloader.Instaloader(
-            download_videos=True,
-            download_video_thumbnails=False,
-            download_geotags=False,
-            download_comments=False,
-            save_metadata=False,
-            post_metadata_txt_pattern="",
-            dirname_pattern=str(DOWNLOAD_DIR / "{target}"),
-            filename_pattern="{date_utc:%Y%m%d_%H%M%S}_{shortcode}",
-        )
+        L = get_loader()
+        L.dirname_pattern = str(DOWNLOAD_DIR / "{target}")
+        L.filename_pattern = "{date_utc:%Y%m%d_%H%M%S}_{shortcode}"
 
         files_before = set(DOWNLOAD_DIR.rglob('*'))
 
@@ -74,10 +98,11 @@ def download():
             L.download_post(post, target=owner)
 
             files_after = set(DOWNLOAD_DIR.rglob('*'))
-            new_files = [f for f in (files_after - files_before) if f.is_file() and f.suffix.lower() in {'.jpg','.jpeg','.png','.mp4','.mov'}]
+            new_files = [f for f in (files_after - files_before)
+                        if f.is_file() and f.suffix.lower() in {'.jpg','.jpeg','.png','.mp4','.mov'}]
 
             if not new_files:
-                return jsonify({'error': 'No se encontraron archivos descargados'}), 500
+                return jsonify({'error': 'No se encontraron archivos'}), 500
 
             new_files.sort(key=lambda f: f.stat().st_mtime)
 
@@ -86,11 +111,7 @@ def download():
                 mime = 'video/mp4' if fpath.suffix.lower() == '.mp4' else 'image/jpeg'
                 return send_file(str(fpath), mimetype=mime, as_attachment=True, download_name=fpath.name)
 
-            return jsonify({
-                'multiple': True,
-                'count': len(new_files),
-                'files': [f.name for f in new_files],
-            })
+            return jsonify({'multiple': True, 'count': len(new_files), 'files': [f.name for f in new_files]})
 
         elif username:
             profile = instaloader.Profile.from_username(L.context, username)
@@ -124,4 +145,3 @@ threading.Thread(target=cleanup, daemon=True).start()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-    
