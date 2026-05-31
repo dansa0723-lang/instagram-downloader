@@ -1,14 +1,13 @@
 import os
 import re
-import json
+import time
 import tempfile
 import threading
-import time
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='.', static_folder='.')
 CORS(app)
 
 DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "instadown"
@@ -35,7 +34,7 @@ def parse_profile(url):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return send_file('index.html')
 
 @app.route('/api/download', methods=['POST'])
 def download():
@@ -80,19 +79,17 @@ def download():
             if not new_files:
                 return jsonify({'error': 'No se encontraron archivos descargados'}), 500
 
-            # Si es un solo archivo, devuélvelo directo
+            new_files.sort(key=lambda f: f.stat().st_mtime)
+
             if len(new_files) == 1:
                 fpath = new_files[0]
                 mime = 'video/mp4' if fpath.suffix.lower() == '.mp4' else 'image/jpeg'
                 return send_file(str(fpath), mimetype=mime, as_attachment=True, download_name=fpath.name)
 
-            # Si son varios (carrusel), devuelve el primero y lista el resto
-            new_files.sort(key=lambda f: f.stat().st_mtime)
             return jsonify({
                 'multiple': True,
                 'count': len(new_files),
                 'files': [f.name for f in new_files],
-                'message': f'{len(new_files)} archivos descargados en el servidor'
             })
 
         elif username:
@@ -104,7 +101,6 @@ def download():
                 'followers': profile.followers,
                 'posts': profile.mediacount,
                 'private': profile.is_private,
-                'pic_url': profile.profile_pic_url,
             })
 
     except Exception as e:
@@ -112,9 +108,8 @@ def download():
 
 @app.route('/api/health')
 def health():
-    return jsonify({'status': 'ok', 'service': 'InstaDown'})
+    return jsonify({'status': 'ok'})
 
-# Limpieza automática de archivos temporales cada hora
 def cleanup():
     while True:
         time.sleep(3600)
@@ -129,3 +124,4 @@ threading.Thread(target=cleanup, daemon=True).start()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+    
