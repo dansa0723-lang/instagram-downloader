@@ -262,7 +262,7 @@ function renderPreview(medias) {
     card.innerHTML = `
       ${isVideo ? '<span class="video-badge">VIDEO</span>' : ''}
       <div class="media-check">✓</div>
-      ${thumb ? `<img class="media-thumb" src="${thumb}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" loading="lazy">
+      ${thumb ? `<img class="media-thumb" src="/api/proxy?url=${encodeURIComponent(thumb)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" loading="lazy">
       <div class="media-thumb-placeholder" style="display:none;">${isVideo ? '🎬' : '🖼'}</div>` 
       : `<div class="media-thumb-placeholder">${isVideo ? '🎬' : '🖼'}</div>`}
       <div class="media-info">
