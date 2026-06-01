@@ -8,10 +8,9 @@ app = Flask(__name__, template_folder='.', static_folder='.')
 CORS(app)
 
 RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', 'ceb1656f4fmshaa112c5aba1f668p1037cdjsn2604f8be52c9')
-RAPIDAPI_HOST = 'instagram-post-reels-stories-downloader-api.p.rapidapi.com'
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+HEADERS_DL = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': 'https://www.instagram.com/',
 }
 
@@ -21,12 +20,11 @@ def index():
 
 @app.route('/api/proxy')
 def proxy():
-    """Proxy para cargar imágenes/videos de Instagram sin CORS"""
     url = request.args.get('url', '')
-    if not url or 'instagram' not in url and 'cdninstagram' not in url and 'fbcdn' not in url:
+    if not url:
         return 'URL inválida', 400
     try:
-        r = requests.get(url, headers=HEADERS, stream=True, timeout=20)
+        r = requests.get(url, headers=HEADERS_DL, stream=True, timeout=20)
         content_type = r.headers.get('content-type', 'image/jpeg')
         def generate():
             for chunk in r.iter_content(chunk_size=8192):
@@ -45,27 +43,48 @@ def get_info():
     if not url or 'instagram.com' not in url:
         return jsonify({'error': 'URL inválida'}), 400
     try:
-        r = requests.get(
-            f'https://{RAPIDAPI_HOST}/instagram/',
-            headers={'x-rapidapi-host': RAPIDAPI_HOST, 'x-rapidapi-key': RAPIDAPI_KEY},
-            params={'url': url}, timeout=30
+        r = requests.post(
+            'https://snap-video3.p.rapidapi.com/download',
+            headers={
+                'x-rapidapi-host': 'snap-video3.p.rapidapi.com',
+                'x-rapidapi-key': RAPIDAPI_KEY,
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            data={'url': url},
+            timeout=30
         )
         result = r.json()
-        items = result if isinstance(result, list) else result.get('result', result.get('data', []))
-        medias = []
-        for i, item in enumerate(items if isinstance(items, list) else [items]):
-            if not isinstance(item, dict): continue
-            media_url = item.get('url', '')
-            thumb = item.get('thumb', item.get('thumbnail', ''))
-            if not thumb:
-                thumb = media_url if 'image' in item.get('type','') else ''
-            mtype = item.get('type', 'image/jpeg')
-            size = int(item.get('size', 0))
-            size_mb = f"{size/1024/1024:.1f} MB" if size > 0 else ''
-            medias.append({'index': i, 'url': media_url, 'thumb': thumb, 'type': mtype, 'size': size_mb})
-        if not medias:
+        if 'medias' not in result:
             return jsonify({'error': 'No se encontró contenido'}), 404
-        return jsonify({'medias': medias, 'count': len(medias)})
+
+        title = result.get('title', 'instagram_post')
+        thumbnail = result.get('thumbnail', '')
+        medias = []
+
+        for i, item in enumerate(result['medias']):
+            media_url = item.get('url', '')
+            if not media_url:
+                continue
+            ext = item.get('extension', 'jpg').lower()
+            quality = item.get('quality', '')
+            is_video = ext == 'mp4' or item.get('videoAvailable') and ext != 'jpg'
+            size = item.get('formattedSize', '')
+            medias.append({
+                'index': i,
+                'url': media_url,
+                'thumb': thumbnail if not is_video else thumbnail,
+                'type': 'video/mp4' if is_video else 'image/jpeg',
+                'ext': ext,
+                'quality': quality,
+                'size': size,
+            })
+
+        return jsonify({
+            'medias': medias,
+            'count': len(medias),
+            'title': title,
+            'thumbnail': thumbnail,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -74,13 +93,13 @@ def download():
     data = request.get_json()
     media_url = data.get('media_url', '').strip()
     filename = data.get('filename', 'instagram_media')
+    ext = data.get('ext', 'jpg')
     if not media_url:
         return jsonify({'error': 'URL requerida'}), 400
     try:
-        r = requests.get(media_url, stream=True, timeout=60, headers=HEADERS)
-        content_type = r.headers.get('content-type', 'video/mp4')
-        ext = 'mp4' if 'video' in content_type else 'jpg'
-        safe_name = re.sub(r'[^\w\-_]', '_', filename)[:50]
+        r = requests.get(media_url, stream=True, timeout=60, headers=HEADERS_DL)
+        content_type = r.headers.get('content-type', 'image/jpeg')
+        safe_name = re.sub(r'[^\w\-_]', '_', filename)[:60]
         fname = f"{safe_name}.{ext}"
         def generate():
             for chunk in r.iter_content(chunk_size=8192):
