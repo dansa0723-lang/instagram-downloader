@@ -67,16 +67,17 @@ def get_info():
                 continue
             ext = item.get('extension', 'jpg').lower()
             quality = item.get('quality', '')
-            is_video = ext == 'mp4' or item.get('videoAvailable') and ext != 'jpg'
-            size = item.get('formattedSize', '')
+            is_video = ext == 'mp4'
+            # Usar la URL del media como thumbnail para imágenes
+            # Para videos usar el thumbnail general
+            thumb = media_url if not is_video else thumbnail
             medias.append({
                 'index': i,
                 'url': media_url,
-                'thumb': thumbnail if not is_video else thumbnail,
+                'thumb': thumb,
                 'type': 'video/mp4' if is_video else 'image/jpeg',
                 'ext': ext,
                 'quality': quality,
-                'size': size,
             })
 
         return jsonify({
